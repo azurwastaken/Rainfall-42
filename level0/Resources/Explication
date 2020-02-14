@@ -1,0 +1,35 @@
+#On arrive sur le home et on dispose d'un binaire setuid sur level1
+#On sait que le password a trouver est situe dans /home/user/level1
+
+#J'essaie de cat le fichier, ce qui ne marche pas (sans surprise), ensuite j'essaie de passer le chemin en parametre
+# a notre binaire et il me renvoie une jolie chaine de caractere "No !"
+
+#En le lancant sans parametre on obtiens un merveilleux segfault sans usage, on est donc oblige oblige d'ouvrir gdb afin
+# de savoir ce que fais le programme:
+
+# J'installe au prealable peda afin d'avoir plus de couleurs et de faciliter a debug
+
+gdb ./level0
+(gdb) b main // breakpoint au debut du main
+(gdb) run
+
+# En avancant dans le programme on voit qu'il bloque a l'interieur d'un atoi, surment car il attend un argument en entre
+# En regardant la ligne apres le atoi on s'apercoit qu'il y a une comparaison sur le retour de celle ci 
+
+cmp eax 0x1a7 // eax etant le registre recuperant le retour des fonctions
+
+#0x1a7 vaut 423, j'essaie donc de lancer le binaire avec 423 en parametre
+
+./level0 423
+
+#ce qui nous retourne sur une invite de commande /bin/sh, premier reflex, ou somme nous et qui somme nous
+
+pwd 
+>>> /home/user/level0
+whoami
+>>> level1
+
+# nous n'avons pas bouger mais nous somme desormais level1, nous pouvons donc cat le fichier .pass dans son home
+
+cat /home/user/level1/.pass
+>>>1fe8a524fa4bec01ca4ea2a869af2a02260d4a7d5fe7e7c24d8617e6dca12d3a

