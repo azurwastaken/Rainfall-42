@@ -1,0 +1,5 @@
+# sur le home il y a un binaire qui fait appelle a ces different fonction:
+
+mettre du shellcode dans le buffer, mettre un l'address du debut de la heap a la fin
+
+pour recuperer l'addr, prendre registre eax apres strdup
